@@ -1,4 +1,12 @@
 {
   "@aws-cdk/core:enableStackNameDuplicates": "true",
-  "aws-cdk:enableDiffNoFail": "true"
+  "aws-cdk:enableDiffNoFail": "true",
+  "hosted-zone:account=505484954397:domainName=email-site.com:region=eu-west-1": {
+    "Id": "/hostedzone/Z0661675279W0YGPJWAP0",
+    "Name": "email-site.com."
+  },
+  "hosted-zone:account=505484954397:domainName=email-site.com:region=us-east-1": {
+    "Id": "/hostedzone/Z0661675279W0YGPJWAP0",
+    "Name": "email-site.com."
+  }
 }
