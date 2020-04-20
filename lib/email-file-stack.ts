@@ -22,6 +22,7 @@ import actions = require("@aws-cdk/aws-ses-actions");
 import sns = require("@aws-cdk/aws-sns");
 import * as CustomResource from "@aws-cdk/custom-resources";
 import iam = require("@aws-cdk/aws-iam");
+import { Lambda } from "@aws-cdk/aws-ses-actions";
 
 const domainName = "email-site.com";
 const wwwRecordName = "www";
@@ -29,14 +30,14 @@ const cdnRecordName = "cdn";
 const apiRecordName = "api";
 const cdnDomainName = [cdnRecordName, domainName].join(".");
 const wwwDomainName = [wwwRecordName, domainName].join(".");
+const apiDomainName = [apiRecordName, domainName].join(".");
 
 export class EmailFileStack extends cdk.Stack {
   constructor(scope: cdk.App, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    const table = new dynamodb.Table(this, "ProcessedEmails", {
-      partitionKey: { name: "user", type: dynamodb.AttributeType.STRING },
-      sortKey: { name: "timestamp", type: dynamodb.AttributeType.NUMBER },
+    const table = new dynamodb.Table(this, "RawEmails", {
+      partitionKey: { name: "key", type: dynamodb.AttributeType.STRING },
       stream: dynamodb.StreamViewType.NEW_IMAGE,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
@@ -85,34 +86,9 @@ export class EmailFileStack extends cdk.Stack {
         domainName,
         hostedZone: zone,
         validationMethod: ValidationMethod.EMAIL,
-        subjectAlternativeNames: [cdnDomainName, wwwDomainName],
+        subjectAlternativeNames: [cdnDomainName, wwwDomainName, apiDomainName],
       }
     );
-    // defines an AWS Lambda resource
-    const hello = new lambda.Function(this, "HelloHandler", {
-      runtime: lambda.Runtime.NODEJS_12_X, // execution environment
-      code: lambda.Code.fromAsset("lambda"), // code loaded from "lambda" directory
-      handler: "hello.handler", // file is "hello", function is "handler"
-      environment: {
-        DOCS_TABLE_NAME: table.tableName,
-      },
-    });
-    const restApi = new apigw.LambdaRestApi(this, "Endpoint", {
-      handler: hello,
-      options: {
-        domainName: {
-          domainName,
-          certificate,
-        },
-      },
-    });
-    table.grantReadWriteData(hello);
-
-    new route53.ARecord(this, "APIAliasRecord", {
-      zone,
-      recordName: apiRecordName,
-      target: route53.RecordTarget.fromAlias(new targets.ApiGateway(restApi)),
-    });
 
     const distributionCertificate = Certificate.fromCertificateArn(
       this,
@@ -222,6 +198,35 @@ export class EmailFileStack extends cdk.Stack {
     //   zone,
     //   recordName: `_amazonses.${domainName}`,
     //   values: [verifyDomainIdentity.getResponseField("VerificationToken")],
+    // });
+
+    // defines an AWS Lambda resource
+    const getter = new lambda.Function(this, "Getter", {
+      runtime: lambda.Runtime.NODEJS_12_X, // execution environment
+      code: lambda.Code.fromAsset("lambda"), // code loaded from "lambda" directory
+      handler: "getter.handler", // file is "hello", function is "handler"
+      environment: {
+        DOCS_TABLE_NAME: table.tableName,
+        EMAIL_BUCKET_NAME: emailBucket.bucketName,
+      },
+    });
+
+    const restApi = new apigw.LambdaRestApi(this, "Endpoint", {
+      handler: getter,
+      options: {
+        domainName: {
+          domainName: apiDomainName,
+          certificate,
+        },
+      },
+    });
+    table.grantReadWriteData(getter);
+    emailBucket.grantReadWrite(getter);
+
+    // new route53.ARecord(this, "APIARecord", {
+    //   zone,
+    //   recordName: apiRecordName,
+    //   target: route53.RecordTarget.fromAlias(new targets.ApiGateway(restApi)),
     // });
   }
 }
