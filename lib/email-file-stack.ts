@@ -8,11 +8,15 @@ import * as cloudfront from "@aws-cdk/aws-cloudfront";
 import {
   DnsValidatedCertificate,
   ValidationMethod,
+  Certificate,
 } from "@aws-cdk/aws-certificatemanager";
 import { DynamoEventSource, SqsDlq } from "@aws-cdk/aws-lambda-event-sources";
 import sqs = require("@aws-cdk/aws-sqs");
 import { Bucket } from "@aws-cdk/aws-s3";
-
+import ses = require("@aws-cdk/aws-ses");
+import actions = require("@aws-cdk/aws-ses-actions");
+import sns = require("@aws-cdk/aws-sns");
+import * as CustomResource from "@aws-cdk/custom-resources";
 const domainName = "email-site.com";
 const wwwRecordName = "www";
 const cdnRecordName = "cdn";
@@ -35,6 +39,7 @@ export class EmailFileStack extends cdk.Stack {
       publicReadAccess: true,
       websiteIndexDocument: "index.html",
       websiteErrorDocument: "404.html",
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
     // defines an AWS Lambda resource
@@ -103,6 +108,12 @@ export class EmailFileStack extends cdk.Stack {
       target: route53.RecordTarget.fromAlias(new targets.ApiGateway(restApi)),
     });
 
+    const distributionCertificate = Certificate.fromCertificateArn(
+      this,
+      "Certificate",
+      "arn:aws:acm:us-east-1:505484954397:certificate/fd3524b7-b04a-4fd7-8478-dedbbab03008"
+    );
+
     // CloudFront distribution that provides HTTPS
     const distribution = new cloudfront.CloudFrontWebDistribution(
       this,
@@ -116,8 +127,11 @@ export class EmailFileStack extends cdk.Stack {
             behaviors: [{ isDefaultBehavior: true }],
           },
         ],
-        viewerCertificate: cloudfront.ViewerCertificate.fromCloudFrontDefaultCertificate(
-          cdnDomainName
+        viewerCertificate: cloudfront.ViewerCertificate.fromAcmCertificate(
+          distributionCertificate,
+          {
+            aliases: [cdnDomainName],
+          }
         ),
       }
     );
@@ -139,5 +153,74 @@ export class EmailFileStack extends cdk.Stack {
     });
 
     staticBucket.grantWrite(processor);
+
+    const emailBucket = new Bucket(this, "EmailBucket", {
+      bucketName: ["emails", domainName].join("."),
+      publicReadAccess: false,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    const topic = new sns.Topic(this, "EmailsTopic");
+
+    // domain also has to be verified, this can be done
+    // through aws-console for ses
+    // and rule set has to be set as active, which can be done through ses UI
+    new ses.ReceiptRuleSet(this, "RuleSet", {
+      rules: [
+        {
+          recipients: [domainName],
+          actions: [
+            new actions.AddHeader({
+              name: "X-Special-Header",
+              value: "aws",
+            }),
+            new actions.S3({
+              bucket: emailBucket,
+              objectKeyPrefix: "emails/",
+              topic,
+            }),
+          ],
+        },
+      ],
+    });
+
+    new route53.MxRecord(this, "ReceiveEmails", {
+      zone,
+      values: [
+        {
+          priority: 10,
+          hostName: "inbound-smtp.eu-west-1.amazonaws.com",
+        },
+      ],
+    });
+
+    //https://github.com/aws/aws-cdk/issues/4533
+    // this is not working, because incorrect policy prefix (email instead of ses) is generated.
+    // for now, domain is verified manually through web ui
+    // const verifyDomainIdentity = new CustomResource.AwsCustomResource(
+    //   this,
+    //   "VerifyDomainIdentity",
+    //   {
+    //     onCreate: {
+    //       service: "SES",
+    //       action: "verifyDomainIdentity",
+    //       parameters: {
+    //         Domain: domainName,
+    //       },
+    //       physicalResourceId: CustomResource.PhysicalResourceId.fromResponse(
+    //         "VerificationToken"
+    //       ), // Use the token returned by the call as physical id
+    //     },
+    //     policy: CustomResource.AwsCustomResourcePolicy.fromSdkCalls({
+    //       resources: CustomResource.AwsCustomResourcePolicy.ANY_RESOURCE,
+    //     }),
+    //   }
+    // );
+
+    // new route53.TxtRecord(this, "SESVerificationRecord", {
+    //   zone,
+    //   recordName: `_amazonses.${domainName}`,
+    //   values: [verifyDomainIdentity.getResponseField("VerificationToken")],
+    // });
   }
 }
