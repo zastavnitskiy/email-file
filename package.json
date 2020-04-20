@@ -32,6 +32,7 @@
     "@aws-cdk/aws-ses-actions": "^1.32.2",
     "@aws-cdk/aws-sns": "^1.32.2",
     "@aws-cdk/core": "^1.32.2",
+    "@types/aws-lambda": "^8.10.50",
     "@types/aws-sdk": "^2.7.0",
     "source-map-support": "^0.5.16"
   }

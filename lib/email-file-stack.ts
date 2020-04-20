@@ -10,13 +10,19 @@ import {
   ValidationMethod,
   Certificate,
 } from "@aws-cdk/aws-certificatemanager";
-import { DynamoEventSource, SqsDlq } from "@aws-cdk/aws-lambda-event-sources";
+import {
+  DynamoEventSource,
+  SqsDlq,
+  SnsEventSource,
+} from "@aws-cdk/aws-lambda-event-sources";
 import sqs = require("@aws-cdk/aws-sqs");
 import { Bucket } from "@aws-cdk/aws-s3";
 import ses = require("@aws-cdk/aws-ses");
 import actions = require("@aws-cdk/aws-ses-actions");
 import sns = require("@aws-cdk/aws-sns");
 import * as CustomResource from "@aws-cdk/custom-resources";
+import iam = require("@aws-cdk/aws-iam");
+
 const domainName = "email-site.com";
 const wwwRecordName = "www";
 const cdnRecordName = "cdn";
@@ -28,13 +34,14 @@ export class EmailFileStack extends cdk.Stack {
   constructor(scope: cdk.App, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    const table = new dynamodb.Table(this, "Hits", {
-      partitionKey: { name: "path", type: dynamodb.AttributeType.STRING },
+    const table = new dynamodb.Table(this, "ProcessedEmails", {
+      partitionKey: { name: "user", type: dynamodb.AttributeType.STRING },
       sortKey: { name: "timestamp", type: dynamodb.AttributeType.NUMBER },
       stream: dynamodb.StreamViewType.NEW_IMAGE,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
-    const staticBucket = new Bucket(this, "MyFirstBucket", {
+    const staticBucket = new Bucket(this, "StaticBucket", {
       bucketName: [wwwRecordName, domainName].join("."),
       publicReadAccess: true,
       websiteIndexDocument: "index.html",
@@ -42,15 +49,13 @@ export class EmailFileStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
-    // defines an AWS Lambda resource
-    const hello = new lambda.Function(this, "HelloHandler", {
-      runtime: lambda.Runtime.NODEJS_12_X, // execution environment
-      code: lambda.Code.fromAsset("lambda"), // code loaded from "lambda" directory
-      handler: "hello.handler", // file is "hello", function is "handler"
-      environment: {
-        DOCS_TABLE_NAME: table.tableName,
-      },
+    const emailBucket = new Bucket(this, "EmailBucket", {
+      bucketName: ["emails", domainName].join("."),
+      publicReadAccess: false,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
+
+    const incomingEmailsTopic = new sns.Topic(this, "EmailsTopic");
 
     const processor = new lambda.Function(this, "Processor", {
       runtime: lambda.Runtime.NODEJS_12_X,
@@ -59,23 +64,15 @@ export class EmailFileStack extends cdk.Stack {
       environment: {
         DOCS_TABLE_NAME: table.tableName,
         STATIC_BUCKET_NAME: staticBucket.bucketName,
+        EMAIL_BUCKET_NAME: emailBucket.bucketName,
       },
     });
 
-    const deadLetterQueue = new sqs.Queue(this, "deadLetterQueue");
+    processor.addEventSource(new SnsEventSource(incomingEmailsTopic));
 
-    processor.addEventSource(
-      new DynamoEventSource(table, {
-        startingPosition: lambda.StartingPosition.TRIM_HORIZON,
-        batchSize: 1,
-        bisectBatchOnError: true,
-        onFailure: new SqsDlq(deadLetterQueue),
-        retryAttempts: 10,
-      })
-    );
-
-    table.grantReadWriteData(hello);
-    table.grantReadData(processor);
+    emailBucket.grantRead(processor);
+    table.grantReadWriteData(processor);
+    staticBucket.grantReadWrite(processor);
 
     const zone = route53.HostedZone.fromLookup(this, "MyZone", {
       domainName,
@@ -91,7 +88,15 @@ export class EmailFileStack extends cdk.Stack {
         subjectAlternativeNames: [cdnDomainName, wwwDomainName],
       }
     );
-
+    // defines an AWS Lambda resource
+    const hello = new lambda.Function(this, "HelloHandler", {
+      runtime: lambda.Runtime.NODEJS_12_X, // execution environment
+      code: lambda.Code.fromAsset("lambda"), // code loaded from "lambda" directory
+      handler: "hello.handler", // file is "hello", function is "handler"
+      environment: {
+        DOCS_TABLE_NAME: table.tableName,
+      },
+    });
     const restApi = new apigw.LambdaRestApi(this, "Endpoint", {
       handler: hello,
       options: {
@@ -101,6 +106,7 @@ export class EmailFileStack extends cdk.Stack {
         },
       },
     });
+    table.grantReadWriteData(hello);
 
     new route53.ARecord(this, "APIAliasRecord", {
       zone,
@@ -154,14 +160,6 @@ export class EmailFileStack extends cdk.Stack {
 
     staticBucket.grantWrite(processor);
 
-    const emailBucket = new Bucket(this, "EmailBucket", {
-      bucketName: ["emails", domainName].join("."),
-      publicReadAccess: false,
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
-    });
-
-    const topic = new sns.Topic(this, "EmailsTopic");
-
     // domain also has to be verified, this can be done
     // through aws-console for ses
     // and rule set has to be set as active, which can be done through ses UI
@@ -170,19 +168,22 @@ export class EmailFileStack extends cdk.Stack {
         {
           recipients: [domainName],
           actions: [
-            new actions.AddHeader({
-              name: "X-Special-Header",
-              value: "aws",
-            }),
             new actions.S3({
               bucket: emailBucket,
-              objectKeyPrefix: "emails/",
-              topic,
+              topic: incomingEmailsTopic,
             }),
           ],
         },
       ],
     });
+
+    processor.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["ses:SendEmail"],
+        resources: [`*`],
+        effect: iam.Effect.ALLOW,
+      })
+    );
 
     new route53.MxRecord(this, "ReceiveEmails", {
       zone,
