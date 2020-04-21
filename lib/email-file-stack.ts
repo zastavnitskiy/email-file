@@ -31,6 +31,8 @@ const apiRecordName = "api";
 const cdnDomainName = [cdnRecordName, domainName].join(".");
 const wwwDomainName = [wwwRecordName, domainName].join(".");
 const apiDomainName = [apiRecordName, domainName].join(".");
+const apiBasePath = "v1";
+const publicApiUrl = "https://" + apiDomainName + apiBasePath + "/";
 
 export class EmailFileStack extends cdk.Stack {
   constructor(scope: cdk.App, id: string, props?: cdk.StackProps) {
@@ -66,6 +68,7 @@ export class EmailFileStack extends cdk.Stack {
         DOCS_TABLE_NAME: table.tableName,
         STATIC_BUCKET_NAME: staticBucket.bucketName,
         EMAIL_BUCKET_NAME: emailBucket.bucketName,
+        PUBLIC_URL: `${publicApiUrl}`,
       },
     });
 
@@ -213,20 +216,30 @@ export class EmailFileStack extends cdk.Stack {
 
     const restApi = new apigw.LambdaRestApi(this, "Endpoint", {
       handler: getter,
-      options: {
-        domainName: {
-          domainName: apiDomainName,
-          certificate,
-        },
-      },
     });
+
+    const domain = new apigw.DomainName(this, "api-domain", {
+      domainName: apiDomainName,
+      certificate: distributionCertificate,
+      endpointType: apigw.EndpointType.EDGE, // default is REGIONAL
+      securityPolicy: apigw.SecurityPolicy.TLS_1_2,
+    });
+
+    const mapping = domain.addBasePathMapping(restApi, { basePath: "v1" });
+
+    new route53.ARecord(this, "APIARecord", {
+      zone,
+      recordName: apiRecordName,
+      target: route53.AddressRecordTarget.fromAlias(
+        new targets.ApiGatewayDomain(domain)
+      ),
+    });
+
     table.grantReadWriteData(getter);
     emailBucket.grantReadWrite(getter);
 
-    // new route53.ARecord(this, "APIARecord", {
-    //   zone,
-    //   recordName: apiRecordName,
-    //   target: route53.RecordTarget.fromAlias(new targets.ApiGateway(restApi)),
-    // });
+    new cdk.CfnOutput(this, "ApiEndpoint", {
+      value: publicApiUrl,
+    });
   }
 }

@@ -7,7 +7,7 @@ exports.handler = async function (
 ) {
   console.log("request:", JSON.stringify(event, undefined, 2));
   console.log("context:", JSON.stringify(context, undefined, 2));
-  const path = event.path.slice(1);
+  const path = event.path.split("/").pop();
   const docClient = new DynamoDB.DocumentClient({ apiVersion: "2012-08-10" });
   const s3 = new S3({ apiVersion: "2006-03-01" });
 
