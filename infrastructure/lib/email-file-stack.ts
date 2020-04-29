@@ -32,7 +32,7 @@ const cdnDomainName = [cdnRecordName, domainName].join(".");
 const wwwDomainName = [wwwRecordName, domainName].join(".");
 const apiDomainName = [apiRecordName, domainName].join(".");
 const apiBasePath = "v1";
-const publicApiUrl = "https://" + apiDomainName + apiBasePath + "/";
+const publicApiUrl = "https://" + apiDomainName + "/" + apiBasePath + "/";
 
 export class EmailFileStack extends cdk.Stack {
   constructor(scope: cdk.App, id: string, props?: cdk.StackProps) {
@@ -62,7 +62,7 @@ export class EmailFileStack extends cdk.Stack {
 
     const processor = new lambda.Function(this, "Processor", {
       runtime: lambda.Runtime.NODEJS_12_X,
-      code: lambda.Code.fromAsset("lambda"),
+      code: lambda.Code.fromAsset("../lambda"),
       handler: "processor.handler",
       environment: {
         DOCS_TABLE_NAME: table.tableName,
@@ -206,7 +206,7 @@ export class EmailFileStack extends cdk.Stack {
     // defines an AWS Lambda resource
     const getter = new lambda.Function(this, "Getter", {
       runtime: lambda.Runtime.NODEJS_12_X, // execution environment
-      code: lambda.Code.fromAsset("lambda"), // code loaded from "lambda" directory
+      code: lambda.Code.fromAsset("../lambda"), // code loaded from "lambda" directory
       handler: "getter.handler", // file is "hello", function is "handler"
       environment: {
         DOCS_TABLE_NAME: table.tableName,

@@ -1,5 +1,6 @@
 import { APIGatewayEvent, APIGatewayEventRequestContext } from "aws-lambda";
 const { DynamoDB, S3 } = require("aws-sdk");
+const simpleParser = require("mailparser").simpleParser;
 
 exports.handler = async function (
   event: APIGatewayEvent,
@@ -29,11 +30,16 @@ exports.handler = async function (
     })
     .promise();
 
+  const parsed = await simpleParser(email.Body);
+  console.log("parsed email", parsed);
+
   return {
     statusCode: 200,
+    headers: { "content-type": "text/html" },
     body: `
     <html>
-      <body>${email.Body.toString("utf8")}</body>
+      <title>${parsed.subject}</title>
+      <body>${parsed.html}</body>
     </html>`,
   };
   //

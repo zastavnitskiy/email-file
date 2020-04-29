@@ -1,0 +1,21 @@
+{
+  "name": "lambda",
+  "version": "1.0.0",
+  "main": "index.js",
+  "author": "Pavel Zastavnitskiy",
+  "license": "MIT",
+  "dependencies": {
+    "@types/aws-lambda": "^8.10.51",
+    "@types/node": "^13.13.4",
+    "aws-lambda": "^1.0.6",
+    "aws-sdk": "^2.665.0",
+    "mailparser": "^2.7.7"
+  },
+  "devDependencies": {
+    "typescript": "^3.8.3"
+  },
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w"
+  }
+}
